@@ -4,21 +4,37 @@ import OpenGL.GL.shaders as shaders
 import glm
 import pyassimp
 import numpy
+import math
+import random
+
+
+texture_surface = pygame.image.load("./models/OBJ/PenguinTexture.bmp")
+texture_data = pygame.image.tostring(texture_surface,"RGB",1)
+width = texture_surface.get_width()
+height = texture_surface.get_height()
+mitime = 0
+clearBuffer = GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT
+
+file = 'sandstorm.mp3'
+pygame.init()
+pygame.mixer.init()
+pygame.mixer.music.load(file)
+
 
 # pygame
 
 pygame.init()
-pygame.display.set_mode((800, 600), pygame.OPENGL | pygame.DOUBLEBUF)
+#surface = pygame.display.set_mode((800, 600), pygame.OPENGLBLIT | pygame.DOUBLEBUF)
+surface = pygame.display.set_mode((800, 600), pygame.OPENGLBLIT | pygame.DOUBLEBUF)
+background = pygame.image.load("bg.jpg")
 clock = pygame.time.Clock()
 pygame.key.set_repeat(1, 10)
-
 
 glClearColor(0.18, 0.18, 0.18, 1.0)
 glEnable(GL_DEPTH_TEST)
 glEnable(GL_TEXTURE_2D)
 
 # shaders
-
 vertex_shader = """
 #version 420
 layout (location = 0) in vec4 position;
@@ -37,7 +53,7 @@ out vec2 vertexTexcoords;
 
 void main()
 {
-    float intensity = dot(normal, normalize(light - position));
+    float intensity = dot(normal, normalize(light - position))+0.5;
 
     gl_Position = projection * view * model * position;
     vertexColor = color * intensity;
@@ -61,12 +77,52 @@ void main()
 }
 """
 
-shader = shaders.compileProgram(
+pin_shader = """
+#version 420
+
+in vec4 vertexColor;
+in vec2 vertexTexcoords;
+uniform float time;
+uniform vec2 resolution;
+
+uniform sampler2D tex;
+
+void main()
+{
+    vec2 p = (2. * gl_FragCoord.xy - 1000) / 300;
+	
+	for(int i=0; i<5; i++){
+		p = abs(p) - 0.375;
+	}
+	
+	float n = 50.;
+	vec2 st = floor(p * n) / n;	
+	
+	float r = length(st*abs(cos(time+st.x)*5.));
+	float g = length(st*abs(sin(time+st.y)*5.));
+	float b = length(st*abs(cos(time*2.)*5.));
+	gl_FragColor = vec4(vec3(r,g, b), 1.0 );
+}
+
+
+"""
+
+
+
+shader1 = shaders.compileProgram(
     shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
     shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER),
-)
-glUseProgram(shader)
 
+)
+
+shader2 = shaders.compileProgram(
+    shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
+    shaders.compileShader(pin_shader, GL_FRAGMENT_SHADER), validate = False
+)
+
+shader = shader1
+
+glUseProgram(shader)
 
 # matrixes
 model = glm.mat4(1)
@@ -76,23 +132,14 @@ projection = glm.perspective(glm.radians(45), 800/600, 0.1, 1000.0)
 glViewport(0, 0, 800, 600)
 
 
-scene = pyassimp.load('./models/OBJ/Japanese_Temple.obj')
+scene = pyassimp.load('./models/OBJ/PenguinBaseMesh.obj')
 
 
 def glize(node):
+    global texture_data, width, height
     model = node.transformation.astype(numpy.float32)
 
     for mesh in node.meshes:
-        material = dict(mesh.material.properties.items())
-        #texture = material['file']
-        #texture = texture.replace("\\\\", "/")
-        #print(texture)
-
-        texture_surface = pygame.image.load("./models/OBJ/Japanese_Temple_Paint.png")
-        #texture_surface = pygame.image.load(texture)
-        texture_data = pygame.image.tostring(texture_surface,"RGB",1)
-        width = texture_surface.get_width()
-        height = texture_surface.get_height()
         texture = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, texture)
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, texture_data)
@@ -145,9 +192,14 @@ def glize(node):
             1
         )
 
+        glUniform1f(
+            glGetUniformLocation(shader, "time"),
+            mitime
+        )
+
         glUniform4f(
-            glGetUniformLocation(shader, "light"), 
-            -100, 300, 0, 1
+            glGetUniformLocation(shader, "light"),
+            camera.x, camera.y, 100, 1
         )
 
         glDrawElements(GL_TRIANGLES, len(faces), GL_UNSIGNED_INT, None)
@@ -157,10 +209,26 @@ def glize(node):
         glize(child)
 
 
-camera = glm.vec3(0, 0, 200)
-camera_speed = 100
+camera = glm.vec3(0, 0, 160)
+camera_speed = 1
+rotation = 0
+radio = camera.z
+zoom = 5
+camera_z = 0
+status = 0
+
+def radius(x, z):
+    return numpy.sqrt((x**2 + z**2))
+
 
 def process_input():
+    global rotation, radio, zoom, camera_z, mitime, status, shader, shader1, shader2, clearBuffer
+    radio = radius(camera.x, camera.z)
+    mitime += 1
+    if(status == 2 or status == 0):
+        glClearColor(0.18, 0.18, 0.18, 1.0)
+    else:
+        glClearColor(random.random(), 0, random.random(), 1)
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             return True
@@ -168,29 +236,57 @@ def process_input():
             return True
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_LEFT:
-                camera.x += camera_speed
-                camera.z += camera_speed
+                rotation += camera_speed
+                camera.x = math.sin(rotation) * radio
+                camera.z = math.cos(rotation) * radio
             if event.key == pygame.K_RIGHT:
-                camera.x -= camera_speed
-                camera.z -= camera_speed
+                rotation -= camera_speed
+                camera.x = math.sin(rotation) * radio
+                camera.z = math.cos(rotation) * radio
             if event.key == pygame.K_UP:
-                #camera.x -= camera_speed
-                camera.z -= camera_speed
+                if camera.z > 20:
+                    camera.z -= zoom
+                elif camera.z < -20:
+                    camera.z += zoom
             if event.key == pygame.K_DOWN:
-                #camera.x -= camera_speed
-                camera.z += camera_speed
+                if 0 < camera.z <300:
+                    camera.z += zoom
+                elif 0 > camera.z > -300:
+                    camera.z -= zoom
             if event.key == pygame.K_w:
-                #camera.x -= camera_speed
-                camera.y -= camera_speed
+                if camera.y >= -300:
+                    camera.y -= zoom
             if event.key == pygame.K_s:
-                #camera.x -= camera_speed
-                camera.y += camera_speed
+                if camera.y < 300:
+                    camera.y += zoom
+            if event.key == pygame.K_p:
+                if(status == 2):
+                    pygame.mixer.music.unpause()
+                    shader = shader2
+                    #clearBuffer = GL_DEPTH_BUFFER_BIT
+                    glUseProgram(shader)
+                    status = 1
+                elif(status == 1):
+                    pygame.mixer.music.pause()
+                    shader = shader1
+                    clearBuffer = GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT
+                    glClear(clearBuffer)
+                    glUseProgram(shader)
+                    status = 2
+                elif(status == 0):
+                    pygame.mixer.music.play(0, 16.5)
+                    shader = shader2
+                    #glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT)
+                    #pygame.display.flip()
+                    #clearBuffer = GL_DEPTH_BUFFER_BIT
+                    glUseProgram(shader)
+                    status = 1
     return False
 
 
 done = False
 while not done:
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
+    glClear(clearBuffer)
 
     view = glm.lookAt(camera, glm.vec3(0, 0, 0), glm.vec3(0, 1, 0))
 

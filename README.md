@@ -2,7 +2,7 @@
 
 Comandos:
 
--Flecha arriba: acercar la camara en el eje Z
+- Flecha arriba: acercar la camara en el eje Z
 -Flecha abajo: alejar la camara en el eje Z
 -Flecha derecha: rotar hacia la derecha en el eje X
 -Flecha izquierda: rotar hacia la izquierda en el eje Y
